@@ -1,59 +1,49 @@
-# Setup: GCP + BigQuery (do this first, ~1 hour)
+# Setup (100% free, no credit card)
 
-Run these in **Cloud Shell** (the `>_` icon top-right of console.cloud.google.com). It already has `gcloud`, `bq` and Python.
+Uses the **BigQuery Sandbox** (free, no card; tables expire after 60 days) and **Google Colab** (free).
 
-## 1. Project + APIs
+## 1. Get the data (Kaggle, free)
 
-```bash
-# Create the project (pick your own unique ID)
-gcloud projects create fraud-risk-azryl --name="Fraud Risk GCP"
-gcloud config set project fraud-risk-azryl
+1. Sign in at kaggle.com, open the **IEEE-CIS Fraud Detection** competition, go to the Data tab and accept the rules.
+2. Download `train_transaction.csv` (about 650 MB).
 
-# Link billing in the console first: Billing > Link a billing account (free trial credits)
-gcloud services enable bigquery.googleapis.com storage.googleapis.com aiplatform.googleapis.com
+## 2. Shrink it to the columns we use
 
-export PROJECT_ID=fraud-risk-azryl
-export REGION=asia-southeast1          # Singapore, closest to KL
-export BUCKET=gs://${PROJECT_ID}-data
-gcloud storage buckets create $BUCKET --location=$REGION
+In PowerShell, inside this repo folder:
+
+```powershell
+pip install pandas pyarrow
+python src/prep.py "C:\path\to\train_transaction.csv" data\transactions.parquet
 ```
 
-## 2. Get the data (Kaggle IEEE-CIS Fraud Detection)
+Expect about 590,540 rows and a file of roughly 20–40 MB. (`data/` is git-ignored.)
 
-1. On kaggle.com, open the *IEEE-CIS Fraud Detection* competition and click **Join / I understand and accept** the rules (required to download).
-2. Kaggle > Settings > API > **Create New Token** → downloads `kaggle.json`.
-3. In Cloud Shell, upload `kaggle.json` (⋮ menu > Upload), then:
+## 3. BigQuery Sandbox (no card)
 
-```bash
-pip install --user kaggle
-mkdir -p ~/.kaggle && mv ~/kaggle.json ~/.kaggle/ && chmod 600 ~/.kaggle/kaggle.json
-~/.local/bin/kaggle competitions download -c ieee-fraud-detection -f train_transaction.csv
-unzip train_transaction.csv.zip
-gcloud storage cp train_transaction.csv $BUCKET/raw/
+1. Go to console.cloud.google.com/bigquery and sign in with your Google account.
+2. Create a project when prompted (e.g. `fraud-risk-azryl`). **Don't** enable billing. The sandbox banner shows at the top.
+3. In the Explorer: ⋮ next to your project → **Create dataset** → ID `fraud`, region `asia-southeast1` → Create.
+4. ⋮ next to `fraud` → **Create table**:
+   - Create table from: **Upload** → select `data\transactions.parquet`, format **Parquet**
+   - Table: `raw_transactions` → Create
+5. Check it in a query tab:
+   ```sql
+   SELECT COUNT(*) n, AVG(isFraud) fraud_rate FROM fraud.raw_transactions
+   ```
+   Expect ~590,540 rows, fraud rate ~3.5%.
+
+## 4. Build the features
+
+Open a new query tab, paste the contents of `sql/01_features.sql`, and run it. It creates `fraud.features`.
+
+## 5. Train in Google Colab (free)
+
+New notebook at colab.research.google.com. Run each block in its own cell:
+
+```python
+from google.colab import auth
+auth.authenticate_user()   # sign in with the same Google account
 ```
-
-## 3. Load into BigQuery
-
-```bash
-bq --location=$REGION mk --dataset ${PROJECT_ID}:fraud
-
-bq --location=$REGION load --autodetect --source_format=CSV --skip_leading_rows=1 \
-  fraud.raw_transactions $BUCKET/raw/train_transaction.csv
-
-bq query --use_legacy_sql=false \
-  "SELECT COUNT(*) n, AVG(isFraud) fraud_rate FROM fraud.raw_transactions"
-# Expect ~590,540 rows, fraud rate ~3.5%
-```
-
-## 4. Build features
-
-```bash
-bq query --use_legacy_sql=false < sql/01_features.sql
-```
-
-## 5. Train on Vertex AI
-
-Console > **Vertex AI > Colab Enterprise** > New notebook (runtime in `asia-southeast1`). Then in a cell:
 
 ```python
 !git clone https://github.com/vyshailendraa-cmd/fraud-risk-gcp.git
@@ -62,11 +52,4 @@ Console > **Vertex AI > Colab Enterprise** > New notebook (runtime in `asia-sout
 !python src/train.py --project fraud-risk-azryl --table fraud.features
 ```
 
-Outputs land in `outputs/` (metrics.json, PR curve, feature importance, saved models).
-
-## Cost control (read this)
-
-- BigQuery: this whole project uses well under the free 1 TB/month of queries.
-- Colab Enterprise: **stop/delete the runtime** when done. It bills while running.
-- Later, Vertex AI endpoints bill per hour while deployed. **Undeploy after demos.**
-- Set a budget alert: Billing > Budgets & alerts > e.g. USD 20.
+Outputs land in `outputs/`: metrics.json/csv, PR curve and feature importance. Download them from the Colab file panel (left sidebar) and commit `metrics.csv` and the two PNGs to the repo.

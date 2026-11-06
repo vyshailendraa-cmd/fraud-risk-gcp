@@ -1,53 +1,31 @@
-# Fraud Risk Detection on Google Cloud (BigQuery + Vertex AI)
+# Gravitational Wave Detections Dashboard (O1–O3a)
 
-Predicts whether a card transaction is fraudulent, using ~590,000 real e-commerce transactions (Kaggle IEEE-CIS). Features are built in **BigQuery SQL**, and models are trained on **Vertex AI** (a baseline, then XGBoost, then LightGBM). The decision threshold is chosen by **business cost**, not just by accuracy.
+An interactive Power BI dashboard analyzing 40 confirmed gravitational wave detections from LIGO/Virgo's first three observing runs, built as a hands-on project alongside Microsoft's PL-300 (Power BI Data Analyst) certification.
 
-> Status: Phase 1 (data, features, models) done. Next: deployed scoring API, drift monitoring, LLM analyst agent.
+## Data source
 
-## Results (test set = the most recent 15% of transactions)
+Event parameters pulled directly from the [GWOSC Event Portal](https://gwosc.org/eventapi/), the official public data release from the LIGO/Virgo/KAGRA collaboration. This is the same underlying catalog used in my BSc dissertation, which tested modified gravity models via gravitational wave–galaxy cross-correlations using MCMC and Bayesian inference.
 
-| Model | PR-AUC | Recall @ 1% FPR | Fraud amount caught | False alarms |
-|---|---|---|---|---|
-| Baseline (logistic regression) | _fill_ | _fill_ | _fill_ | _fill_ |
-| XGBoost | _fill_ | _fill_ | _fill_ | _fill_ |
-| LightGBM | _fill_ | _fill_ | _fill_ | _fill_ |
+- `gw_events.csv` — 40 confirmed detections (GWTC-1 through GWTC-3), with masses, distance, redshift, network SNR, spin, and false alarm rate
+- `observing_runs.csv` — reference table of LIGO/Virgo observing run windows (O1–O3b) with active detector configurations
 
-_Copy these numbers from `outputs/metrics.csv` after training._
+## What the dashboard covers
 
-![PR curve](outputs/pr_curve.png) ![Feature importance](outputs/feature_importance.png)
+- **Mass Distribution by Observing Run** — scatter plot of both merging black hole masses, bubble-sized by distance, colored by observing run
+- **Detections per Observing Run** — bar chart showing detection rate climbing as instrument sensitivity improved across O1 → O2 → O3a
+- **Key Statistics** — total detections, average total mass, and farthest confirmed detection
+- **Network SNR Over Time** — signal-to-noise ratio trend across all 40 events
 
-**In plain English:** _fill in after training, e.g. "At a 1% false-alarm rate, the LightGBM model catches X% of fraud, which is Y% of the money lost to fraud. The strongest signals are how many times a card was used in the last hour and how unusual the amount is for that card."_
+## Skills demonstrated
 
-## Architecture
+- **Data preparation**: cleaning real-world scientific data with genuine nulls and inconsistent formats (Power Query)
+- **Data modeling**: DAX-based date-range classification (`SWITCH` logic) to assign each event to its observing run, since the two tables share no direct key
+- **DAX measures**: `COUNTROWS`, `AVERAGE`, `MAX`, conditional bucketing
+- **Data visualization**: scatter, bar, KPI card, and time-series visuals designed to surface a clear narrative rather than just display numbers
 
-```
-Kaggle CSV → Cloud Storage → BigQuery (raw) → BigQuery SQL features → Vertex AI (train + evaluate) → models + metrics
-```
+## View the dashboard
 
-## Key decisions
+See `GW_Dashboard.pdf` in this repo for a static export of the full dashboard.
 
-**1. Preventing data leakage**
-- **Features look only at the past.** Velocity features (transactions per card in the last 1h/24h, spend vs the card's own average) use SQL window frames ending at `1 PRECEDING`, so a transaction never "sees" itself or anything after it.
-- **No feature uses the fraud label.** A "card's past fraud count" feature would look powerful but wouldn't be available in real time, because fraud labels arrive days later via chargebacks.
-- **Time-based split, not random.** Train on the earliest 70%, tune on the next 15%, test on the latest 15%. A random split lets the model learn from the future and inflates scores.
-- **Known residual risk:** the same card can appear in both train and test. That's realistic for production (returning customers), but it means scores on brand-new cards would be lower.
-
-**2. Choosing metrics**
-- Only ~3.5% of transactions are fraud, so accuracy is meaningless (predicting "legit" every time gets ~96.5%).
-- **PR-AUC** measures how well the model ranks fraud above legitimate transactions.
-- **Recall at 1% false-positive rate** answers the business question "how much fraud do we catch if we only bother 1 in 100 genuine customers?"
-
-**3. Cost-based threshold**
-Each missed fraud costs its transaction amount, and each false alarm costs an assumed $5 (review time, annoyed customer). The threshold that minimises total cost is picked on the validation set, then reported once on the test set.
-
-## Run it
-
-See [SETUP.md](SETUP.md) for the GCP setup. Then:
-
-```bash
-pip install -r requirements.txt
-python src/train.py --project <your-gcp-project> --table fraud.features
-```
-
-## Tech
-Python, SQL, BigQuery, Vertex AI (Colab Enterprise), XGBoost, LightGBM, scikit-learn.
+---
+*Built by Vyshailendra Azryl Pathma Raja — BSc (Hons) Physics, Astrophysics and Cosmology, University of Portsmouth*
