@@ -6,24 +6,24 @@ Flags fraudulent mobile-money transfers in 6.36 million e-wallet-style transacti
 
 ## Results (test set = the most recent ~15% of hours)
 
-| Model | PR-AUC | Recall @ 1% FPR | Fraud amount caught | False alarms |
-|---|---|---|---|---|
-| Existing rule (`isFlaggedFraud`) | _fill_ | _fill_ | _fill_ | _fill_ |
-| Baseline (logistic regression) | _fill_ | _fill_ | _fill_ | _fill_ |
-| XGBoost | _fill_ | _fill_ | _fill_ | _fill_ |
-| LightGBM | _fill_ | _fill_ | _fill_ | _fill_ |
-| *Leaky XGBoost (never deployed)* | _fill_ | _fill_ | _fill_ | _fill_ |
+| Model | PR-AUC | Recall @ 1% FPR | Fraud caught | Fraud amount caught | False alarms |
+|---|---|---|---|---|---|
+| Existing rule (`isFlaggedFraud`) | 0.013 | 1.3% | 0.3% | 1.1% | 0 |
+| Baseline (logistic regression) | 0.857 | 90.8% | 99.2% | 99.96% | 23,726 |
+| XGBoost | 0.994 | 99.98% | 99.6% | 99.95% | 408 |
+| **LightGBM (best)** | **0.996** | **99.75%** | **99.7%** | **99.99%** | **7** |
+| *Leaky XGBoost (never deployed)* | *1.000* | *100%* | *99.7%* | *100%* | *0* |
 
-_Copy these from `outputs/metrics.csv` after training._
+Test period: 408,077 TRANSFER/CASH_OUT transactions, about 4,000 of them fraud. Thresholds chosen by cost on the validation period. Full numbers in [`outputs/metrics.csv`](outputs/metrics.csv).
 
 ![PR curve](outputs/pr_curve.png) ![Feature importance](outputs/feature_importance.png)
 
-**In plain English:** _fill in after training, e.g. "The existing rule catches under 1% of fraud. LightGBM catches X% of fraudulent transfers (Y% of the money) with Z false alarms on the test period."_
+**In plain English:** the existing rule flags only 0.3% of fraudulent transfers. LightGBM catches 99.7% of them (99.99% of the money at risk) while raising just 7 false alarms across roughly 404,000 legitimate transactions. The leaky model scores a perfect 1.0, which shows how using post-transaction balances inflates results; it is never deployed. Given that PaySim is synthetic, read these as an upper bound (see Limitations).
 
 ## Architecture
 
 ```
-Kaggle CSV → prep.py (Parquet parts) → BigQuery raw table → BigQuery SQL features → Colab: train + evaluate → models + metrics
+Kaggle CSV → prep.py (Parquet parts) → BigQuery raw table (6.36M rows) → BigQuery SQL features (2.77M rows) → Colab reads BigQuery → train + evaluate → metrics + charts
 ```
 
 ## Key decisions

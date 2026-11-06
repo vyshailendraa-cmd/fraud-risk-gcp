@@ -1,0 +1,6 @@
+model,pr_auc,roc_auc,recall_at_1pct_fpr,threshold,fraud_caught_pct,fraud_amount_caught_pct,false_alarms,total_cost
+existing_rule (isFlaggedFraud),0.013,0.5016,0.0132,0.5,0.0032,0.0112,0,6252855726.14
+baseline_logreg,0.857,0.9963,0.9075,0.41,0.9918,0.9996,23726,3639656.05
+xgboost,0.9936,0.9999,0.9998,0.05,0.9958,0.9995,408,3049951.87
+lightgbm,0.996,0.9982,0.9975,0.03,0.9965,0.9999,7,399395.08
+LEAKY_xgboost (do not use),1.0,1.0,1.0,0.29,0.997,1.0,0,0.0
