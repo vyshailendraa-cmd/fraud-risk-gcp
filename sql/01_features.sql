@@ -1,71 +1,77 @@
--- Leakage-safe feature table for fraud detection.
--- Every behavioural feature looks ONLY at a card's PAST transactions
--- (window frames end at "1 PRECEDING"), so nothing from the current
--- or future transactions leaks into the features. No feature uses the label.
+-- Leakage-safe fraud features for PaySim (mobile money / e-wallet transactions).
 --
--- TransactionDT = seconds from a fixed reference point (IEEE-CIS).
+-- step = hour of the simulation (1..743, about 31 days).
+-- Behavioural features look ONLY at earlier hours (window frames end at
+-- "1 PRECEDING" on step), so a transaction never sees itself, anything later,
+-- or anything else in the same hour.
+--
+-- Features are computed over ALL transaction types (so a destination account's
+-- full inflow history counts), then the model table keeps only TRANSFER and
+-- CASH_OUT, the only types where fraud occurs in this data.
+--
+-- leak_* columns are balances AFTER the transaction. A real-time fraud check
+-- runs BEFORE the money moves, so these would not exist yet. They are kept
+-- only to demonstrate the leakage in train.py and must never be used as model
+-- inputs.
 
 CREATE OR REPLACE TABLE fraud.features AS
-WITH base AS (
+WITH enriched AS (
   SELECT
-    TransactionID,
-    isFraud,
-    TransactionDT,
-    TransactionAmt,
-    ProductCD,
-    card4,
-    card6,
-    P_emaildomain,
-    -- Proxy for a card/customer identity (no true card ID is provided)
-    CONCAT(
-      IFNULL(CAST(card1 AS STRING), 'na'), '_',
-      IFNULL(CAST(card2 AS STRING), 'na'), '_',
-      IFNULL(CAST(card3 AS STRING), 'na'), '_',
-      IFNULL(CAST(card5 AS STRING), 'na'), '_',
-      IFNULL(CAST(addr1 AS STRING), 'na')
-    ) AS card_key,
-    C1, C2, C5, C6, C9, C11, C13, C14,
-    D1, D4, D10, D15
-  FROM fraud.raw_transactions
+    t.*,
+
+    -- Destination account ("mule") activity before this hour
+    COUNT(*) OVER (
+      PARTITION BY nameDest, dest_is_merchant ORDER BY step
+      RANGE BETWEEN 24 PRECEDING AND 1 PRECEDING
+    ) AS dest_txn_count_24h,
+    IFNULL(SUM(amount) OVER (
+      PARTITION BY nameDest, dest_is_merchant ORDER BY step
+      RANGE BETWEEN 24 PRECEDING AND 1 PRECEDING
+    ), 0) AS dest_amt_in_24h,
+    COUNT(*) OVER (
+      PARTITION BY nameDest, dest_is_merchant ORDER BY step
+      RANGE BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+    ) AS dest_txn_history,
+
+    -- Sender activity before this hour
+    COUNT(*) OVER (
+      PARTITION BY nameOrig, orig_is_merchant ORDER BY step
+      RANGE BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+    ) AS orig_txn_history
+
+  FROM fraud.raw_transactions AS t
 )
 SELECT
-  b.*,
+  txn_id,
+  step,
+  isFraud,
+  isFlaggedFraud,               -- the existing rule system's flag (for comparison only)
+  type,
+  amount,
+  LN(1 + amount) AS log_amt,
+  MOD(step, 24) AS hour_of_day,
 
-  -- Time features
-  MOD(CAST(FLOOR(TransactionDT / 3600) AS INT64), 24) AS hour_of_day,
-  MOD(CAST(FLOOR(TransactionDT / 86400) AS INT64), 7) AS day_of_week,
-  LN(1 + TransactionAmt) AS log_amt,
+  -- Sender balance BEFORE the transaction (known at decision time)
+  oldbalanceOrg,
+  SAFE_DIVIDE(amount, oldbalanceOrg) AS amt_to_orig_balance,
+  CAST(oldbalanceOrg > 0 AND amount >= oldbalanceOrg AS INT64) AS drains_orig_account,
+  CAST(oldbalanceOrg = 0 AS INT64) AS orig_balance_zero,
 
-  -- Velocity: how many transactions this card made BEFORE this one
-  COUNT(*) OVER (
-    PARTITION BY card_key ORDER BY TransactionDT
-    RANGE BETWEEN 3600 PRECEDING AND 1 PRECEDING
-  ) AS txn_count_1h,
-  COUNT(*) OVER (
-    PARTITION BY card_key ORDER BY TransactionDT
-    RANGE BETWEEN 86400 PRECEDING AND 1 PRECEDING
-  ) AS txn_count_24h,
-  IFNULL(SUM(TransactionAmt) OVER (
-    PARTITION BY card_key ORDER BY TransactionDT
-    RANGE BETWEEN 86400 PRECEDING AND 1 PRECEDING
-  ), 0) AS amt_sum_24h,
+  -- Receiver balance BEFORE the transaction
+  oldbalanceDest,
+  CAST(oldbalanceDest = 0 AS INT64) AS dest_balance_zero,
 
-  -- Spending profile from the card's history only
-  COUNT(*) OVER (
-    PARTITION BY card_key ORDER BY TransactionDT
-    ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
-  ) AS card_txn_history,
-  SAFE_DIVIDE(
-    TransactionAmt,
-    AVG(TransactionAmt) OVER (
-      PARTITION BY card_key ORDER BY TransactionDT
-      ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
-    )
-  ) AS amt_vs_card_avg,
+  dest_txn_count_24h,
+  dest_amt_in_24h,
+  dest_txn_history,
+  CAST(dest_txn_history = 0 AS INT64) AS dest_first_seen,
+  orig_txn_history,
 
-  -- Seconds since the card's previous transaction (NULL for first-ever)
-  TransactionDT - LAG(TransactionDT) OVER (
-    PARTITION BY card_key ORDER BY TransactionDT
-  ) AS secs_since_prev_txn
+  -- LEAKY: post-transaction balances (for the leakage demo only)
+  newbalanceOrig AS leak_newbalanceOrig,
+  newbalanceDest AS leak_newbalanceDest,
+  oldbalanceOrg - amount - newbalanceOrig AS leak_orig_balance_error,
+  oldbalanceDest + amount - newbalanceDest AS leak_dest_balance_error
 
-FROM base b;
+FROM enriched
+WHERE type IN ('TRANSFER', 'CASH_OUT');

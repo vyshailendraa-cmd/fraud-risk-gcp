@@ -3,3 +3,4 @@ __pycache__/
 *.csv
 !outputs/metrics.csv
 .ipynb_checkpoints/
+data/

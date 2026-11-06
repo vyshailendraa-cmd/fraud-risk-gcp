@@ -2,41 +2,42 @@
 
 Uses the **BigQuery Sandbox** (free, no card; tables expire after 60 days) and **Google Colab** (free).
 
-## 1. Get the data (Kaggle, free)
+## 1. Get the data
 
-1. Sign in at kaggle.com, open the **IEEE-CIS Fraud Detection** competition, go to the Data tab and accept the rules.
-2. Download `train_transaction.csv` (about 650 MB).
+Download **PaySim** from Kaggle: kaggle.com/datasets/ealaxi/paysim1 → **Download** (about 180 MB zipped).
+Unzip it. You get `PS_20174392719_1491204439457_log.csv` (about 470 MB, 6.36 million rows).
 
-## 2. Shrink it to the columns we use
+## 2. Prepare the upload files
 
 In PowerShell, inside this repo folder:
 
 ```powershell
 pip install pandas pyarrow
-python src/prep.py "C:\path\to\train_transaction.csv" data\transactions.parquet
+python src/prep.py "C:\Users\<you>\Downloads\PS_20174392719_1491204439457_log.csv" data
 ```
 
-Expect about 590,540 rows and a file of roughly 20–40 MB. (`data/` is git-ignored.)
+This writes `data\paysim_part1.parquet`, `part2` and `part3` (each about 86 MB). The BigQuery console accepts uploads up to 100 MB, so the data is split into three parts. (`data/` is git-ignored.)
 
-## 3. BigQuery Sandbox (no card)
+## 3. Load into the BigQuery Sandbox
 
 1. Go to console.cloud.google.com/bigquery and sign in with your Google account.
-2. Create a project when prompted (e.g. `fraud-risk-azryl`). **Don't** enable billing. The sandbox banner shows at the top.
-3. In the Explorer: ⋮ next to your project → **Create dataset** → ID `fraud`, region `asia-southeast1` → Create.
+2. Create a project when prompted (e.g. `fraud-risk-azryl`). **Don't** enable billing.
+3. In the Explorer: ⋮ next to your project → **Create dataset** → Dataset ID `fraud`, location `asia-southeast1` → Create.
 4. ⋮ next to `fraud` → **Create table**:
-   - Create table from: **Upload** → select `data\transactions.parquet`, format **Parquet**
-   - Table: `raw_transactions` → Create
-5. Check it in a query tab:
+   - Create table from: **Upload** → `paysim_part1.parquet`, file format **Parquet**
+   - Table: `raw_transactions` → **Create table**
+5. Repeat **Create table** for `paysim_part2.parquet`, then for `paysim_part3.parquet`, with the same table name `raw_transactions`. Under **Advanced options**, set **Write preference** to **Append to table**.
+6. Check in a query tab:
    ```sql
-   SELECT COUNT(*) n, AVG(isFraud) fraud_rate FROM fraud.raw_transactions
+   SELECT COUNT(*) AS n, SUM(isFraud) AS frauds FROM fraud.raw_transactions
    ```
-   Expect ~590,540 rows, fraud rate ~3.5%.
+   Expect 6,362,620 rows and 8,213 frauds.
 
 ## 4. Build the features
 
-Open a new query tab, paste the contents of `sql/01_features.sql`, and run it. It creates `fraud.features`.
+New query tab → paste the whole of `sql/01_features.sql` → **Run**. It creates `fraud.features` (2,770,409 TRANSFER and CASH_OUT transactions).
 
-## 5. Train in Google Colab (free)
+## 5. Train in Google Colab
 
 New notebook at colab.research.google.com. Run each block in its own cell:
 
@@ -52,4 +53,8 @@ auth.authenticate_user()   # sign in with the same Google account
 !python src/train.py --project fraud-risk-azryl --table fraud.features
 ```
 
-Outputs land in `outputs/`: metrics.json/csv, PR curve and feature importance. Download them from the Colab file panel (left sidebar) and commit `metrics.csv` and the two PNGs to the repo.
+Use your own project ID if it's different. Training takes a few minutes.
+
+## 6. Save the results
+
+In the Colab file panel (left sidebar), open `fraud-risk-gcp/outputs/` and download `metrics.csv`, `pr_curve.png` and `feature_importance.png`. Put them in this repo's `outputs/` folder, fill in the README results table from `metrics.csv`, then commit and push.
